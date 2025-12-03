@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { TodoList, Todo } from '../types/todo'
+import type { TodoList } from '../types/todo'
 import { todoApi } from '../services/api'
 
 interface TodoStore {
@@ -8,7 +8,9 @@ interface TodoStore {
   error: string | null
   fetchTodoLists: () => Promise<void>
   createTodoList: (name: string) => Promise<void>
+  updateTodoList: (todoListId: number, name: string) => Promise<void>
   addTodo: (todoListId: number, title: string) => Promise<void>
+  updateTodoTitle: (todoId: number, title: string) => Promise<void>
   toggleTodo: (todoId: number, completed: boolean) => Promise<void>
   deleteTodo: (todoId: number) => Promise<void>
   completeAllTodos: (todoListId: number) => Promise<void>
@@ -45,6 +47,50 @@ export const useTodoStore = create<TodoStore>((set, get) => ({
       console.error('Failed to create todo list:', error)
     }
   },
+  updateTodoList: async (todoListId: number, name: string) => {
+    if (!name.trim()) return
+    
+    // Find the existing todo list to preserve its properties
+    const state = get()
+    const existingTodoList = state.todoLists.find(list => list.id === todoListId)
+    
+    if (!existingTodoList) {
+      console.error('Todo list not found:', todoListId)
+      return
+    }
+
+    // Optimistic update
+    set((state) => ({
+      todoLists: state.todoLists.map((list) =>
+        list.id === todoListId 
+          ? { ...list, name: name.trim() } // Optimistic update
+          : list
+      ),
+    }))
+
+    try {
+      const updatedTodoList = await todoApi.updateTodoList(todoListId, name.trim())
+      
+      // Update with server response
+      set((state) => ({
+        todoLists: state.todoLists.map((list) =>
+          list.id === todoListId 
+            ? updatedTodoList
+            : list
+        ),
+      }))
+    } catch (error) {
+      console.error('Failed to update todo list:', error)
+      // Revert on error
+      set((state) => ({
+        todoLists: state.todoLists.map((list) =>
+          list.id === todoListId 
+            ? existingTodoList // Revert to original
+            : list
+        ),
+      }))
+    }
+  },
   addTodo: async (todoListId: number, title: string) => {
     if (!title.trim()) return
     
@@ -62,6 +108,65 @@ export const useTodoStore = create<TodoStore>((set, get) => ({
     } catch (error) {
       console.error('Failed to create todo:', error)
       // Optionally set error state here if needed
+    }
+  },
+  updateTodoTitle: async (todoId: number, title: string) => {
+    if (!title.trim()) return
+    
+    // Find the existing todo to preserve its properties
+    const state = get()
+    const existingTodo = state.todoLists
+      .flatMap(list => list.todos)
+      .find(todo => todo.id === todoId)
+    
+    if (!existingTodo) {
+      console.error('Todo not found:', todoId)
+      return
+    }
+
+    // Optimistic update
+    set((state) => ({
+      todoLists: state.todoLists.map((list) => ({
+        ...list,
+        todos: list.todos.map((todo) =>
+          todo.id === todoId 
+            ? { ...todo, title: title.trim() } // Optimistic update
+            : todo
+        ),
+      })),
+    }))
+
+    try {
+      const updatedTodo = await todoApi.updateTodo(todoId, { title: title.trim() })
+      
+      // Update with server response
+      set((state) => ({
+        todoLists: state.todoLists.map((list) => ({
+          ...list,
+          todos: list.todos.map((todo) =>
+            todo.id === todoId 
+              ? { 
+                  id: updatedTodo.id,
+                  title: updatedTodo.title,
+                  completed: updatedTodo.completed 
+                }
+              : todo
+          ),
+        })),
+      }))
+    } catch (error) {
+      console.error('Failed to update todo title:', error)
+      // Revert on error
+      set((state) => ({
+        todoLists: state.todoLists.map((list) => ({
+          ...list,
+          todos: list.todos.map((todo) =>
+            todo.id === todoId 
+              ? { ...existingTodo } // Revert to original
+              : todo
+          ),
+        })),
+      }))
     }
   },
   toggleTodo: async (todoId: number, completed: boolean) => {
